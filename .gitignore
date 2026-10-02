@@ -1,0 +1,17 @@
+# Build output
+bin/
+*.exe
+dist/
+
+# Never commit real signed documents, certificates or keys
+*.udf
+*.sgn
+*.p12
+*.pfx
+*.pem
+*.key
+testdata/private/
+
+.idea/
+.vscode/
+.env

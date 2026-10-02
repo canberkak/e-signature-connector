@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E-imza Bileşeni Demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1c2430; --muted: #5b6676; --line: #dde1e7;
+    --accent: #1f5fd1; --accent-text: #fff; --ok: #1b7f45; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161c; --card: #1a2029; --text: #e6eaf0; --muted: #9aa5b5; --line: #2b3441;
+      --accent: #5b8def; --accent-text: #0b1220; --ok: #5fcf8a; --bad: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  button { font: inherit; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .status { color: var(--muted); }
+  .cert { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+  .cert:has(input:checked) { border-color: var(--accent); }
+  .cert input { margin-right: 8px; }
+  .cert small { display: block; color: var(--muted); margin-left: 24px; }
+  .tag { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; color: var(--muted); }
+  .tag.bad { color: var(--bad); border-color: var(--bad); }
+  .result { padding: 6px 0; border-top: 1px solid var(--line); }
+  .result:first-child { border-top: 0; }
+  .ok { color: var(--ok); }
+  .err { color: var(--bad); }
+  .error-box { color: var(--bad); margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>E-imza Bileşeni</h1>
+  <p class="lead">Bu sayfa bileşenin kendi test sayfasıdır. İmzalamadan önce Windows'ta bir onay penceresi açılır.</p>
+
+  <section>
+    <h2>1. Bağlantı</h2>
+    <div id="status" class="status">Bileşene bağlanılıyor…</div>
+  </section>
+
+  <section>
+    <h2>2. Sertifika</h2>
+    <div id="certs" class="status">Bekleniyor…</div>
+    <button id="reload" class="secondary" type="button">Yeniden yükle</button>
+  </section>
+
+  <section>
+    <h2>3. Belgeler</h2>
+    <p class="status">.udf dosyaları UYAP belgesi olarak imzalanır; diğer dosyalar için ayrık CAdES imzası (.p7s) üretilir.</p>
+    <input id="files" type="file" multiple>
+    <p><button id="sign" type="button" disabled>İmzala</button></p>
+    <div id="error" class="error-box" role="alert"></div>
+  </section>
+
+  <section id="resultsBox" hidden>
+    <h2>Sonuç</h2>
+    <div id="results"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let selected = null;
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.message || "Bilinmeyen hata");
+  return body;
+}
+
+function text(tag, content, className) {
+  const el = document.createElement(tag);
+  el.textContent = content;
+  if (className) el.className = className;
+  return el;
+}
+
+function updateSignButton() {
+  $("sign").disabled = !selected || $("files").files.length === 0;
+}
+
+async function loadStatus() {
+  try {
+    const s = await api("/v1/status");
+    $("status").textContent = s.platformSupported
+      ? "Bağlı (sürüm " + s.version + ")"
+      : "Bağlı, ancak bu işletim sistemi desteklenmiyor.";
+    $("status").className = s.platformSupported ? "ok" : "err";
+  } catch (e) {
+    $("status").textContent = "Bağlanılamadı: " + e.message;
+    $("status").className = "err";
+  }
+}
+
+async function loadCertificates() {
+  const box = $("certs");
+  selected = null;
+  updateSignButton();
+  try {
+    const certs = await api("/v1/certificates");
+    box.replaceChildren();
+    box.className = "";
+    if (certs.length === 0) {
+      box.append(text("p", "Kişisel sertifika deposunda özel anahtarlı sertifika yok. E-imza kartının takılı ve sürücüsünün yüklü olduğundan emin olun.", "status"));
+      return;
+    }
+    certs.forEach((c) => {
+      const label = document.createElement("label");
+      label.className = "cert";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "cert";
+      radio.disabled = !c.valid;
+      radio.addEventListener("change", () => { selected = c.id; updateSignButton(); });
+      const name = document.createElement("strong");
+      name.textContent = c.subject;
+      label.append(radio, name);
+      if (c.qualified) label.append(text("span", "nitelikli", "tag"));
+      if (!c.valid) label.append(text("span", "geçersiz", "tag bad"));
+      const notAfter = new Date(c.notAfter).toLocaleDateString("tr-TR");
+      label.append(text("small", [c.identityNumber, c.issuer, c.keyAlgorithm, "bitiş " + notAfter].filter(Boolean).join(" · ")));
+      box.append(label);
+    });
+  } catch (e) {
+    box.textContent = e.message;
+    box.className = "err";
+  }
+}
+
+function toBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function fromBase64(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function sign() {
+  $("error").textContent = "";
+  $("sign").disabled = true;
+  try {
+    const files = [...$("files").files];
+    const documents = await Promise.all(files.map(async (f, i) => ({
+      id: String(i),
+      name: f.name,
+      format: f.name.toLowerCase().endsWith(".udf") ? "udf" : "cms",
+      data: toBase64(await f.arrayBuffer()),
+    })));
+    const res = await api("/v1/sign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ certificateId: selected, documents }),
+    });
+    showResults(files, documents, res.results);
+  } catch (e) {
+    $("error").textContent = e.message;
+  } finally {
+    updateSignButton();
+  }
+}
+
+function showResults(files, documents, results) {
+  const box = $("results");
+  box.replaceChildren();
+  results.forEach((r) => {
+    const i = Number(r.id);
+    const row = document.createElement("div");
+    row.className = "result";
+    row.append(text("span", files[i].name + " — "));
+    if (r.error) {
+      row.append(text("span", r.error, "err"));
+    } else {
+      const isUdf = documents[i].format === "udf";
+      const link = document.createElement("a");
+      link.textContent = "İmzalandı, indir";
+      link.className = "ok";
+      link.href = URL.createObjectURL(new Blob([fromBase64(r.data)]));
+      link.download = isUdf ? files[i].name : files[i].name + ".p7s";
+      row.append(link);
+    }
+    box.append(row);
+  });
+  $("resultsBox").hidden = false;
+}
+
+$("reload").addEventListener("click", loadCertificates);
+$("files").addEventListener("change", updateSignButton);
+$("sign").addEventListener("click", sign);
+loadStatus().then(loadCertificates);
+</script>
+</body>
+</html>
